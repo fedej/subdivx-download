@@ -7,7 +7,7 @@ import logging.handlers
 from contextlib import contextmanager
 
 from tvnamer.utils import FileParser, FileFinder
-import subdivxlib as lib
+from .subdivxlib import *
 
 #obtained from http://flexget.com/wiki/Plugins/quality
 _qualities = ('1080i', '1080p', '1080p1080', '10bit', '1280x720',
@@ -36,7 +36,7 @@ def extract_meta_data(filename):
     return quality, group, codec
 
 @contextmanager
-def subtitle_renamer(filepath):
+def subtitle_renamer(filepath, logger):
     """dectect new subtitles files in a directory and rename with
        filepath basename"""
 
@@ -46,7 +46,7 @@ def subtitle_renamer(filepath):
             filename, fileext = os.path.splitext(filename)
         return filename
 
-    dirpath = os.path.dirname(filepath)
+    dirpath = os.path.dirname(os.path.abspath(filepath))
     filename = os.path.basename(filepath)
     before = set(os.listdir(dirpath))
     yield
@@ -56,27 +56,28 @@ def subtitle_renamer(filepath):
             # only apply to subtitles
             continue
 
-        filename = extract_name(filepath)
-        os.rename(new_file, filename + '.srt')
+        filename = extract_name(filename)
+        os.rename(dirpath + '/' + new_file, dirpath + '/' + filename + '.srt')
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str,
                         help="file or directory to retrieve subtitles")
+    parser.add_argument('logfile', metavar='logfile', type=str, help='Log File')
     parser.add_argument('--quiet', '-q', action='store_true')
     parser.add_argument('--skip', '-s', type=int,
                         default=0, help="skip from head")
     parser.add_argument('--force', '-f', action='store_true',
                         default=False, help="override existing file")
     args = parser.parse_args()
-    lib.setup_logger(lib.LOGGER_LEVEL)
+    logger = setup_logger(LOGGER_LEVEL, args.logfile)
 
     if not args.quiet:
         console = logging.StreamHandler()
-        console.setFormatter(lib.LOGGER_FORMATTER)
-        lib.logger.addHandler(console)
+        console.setFormatter(LOGGER_FORMATTER)
+        logger.addHandler(console)
 
-    cursor = FileFinder(args.path, with_extension=['avi','mkv','mp4',
+    cursor = FileFinder(args.path, recursive=True, with_extension=['avi','mkv','mp4',
                                                    'mpg','m4v','ogv',
                                                    'vob', '3gp',
                                                    'part', 'temp', 'tmp'
@@ -92,21 +93,21 @@ def main():
               continue
 
         filename = os.path.basename(filepath)
-
+        url = None
         try:
             info = FileParser(filename).parse()
             series_name = info.seriesname
             series_id = 's%02de%s' % (info.seasonnumber, '-'.join(['%02d' % e for e in info.episodenumbers]))
             quality, group, codec = extract_meta_data(filename)
-            url = lib.get_subtitle_url(series_name, series_id,
+            url = get_subtitle_url(series_name, series_id,
                                        group or quality or codec,
                                        args.skip)
-        except lib.NoResultsError, e:
-            lib.logger.error(e.message)
-            raise
+        except Exception as e:
+            logger.exception("General Error")
 
-        with subtitle_renamer(filepath):
-            lib.get_subtitle(url, 'temp__' + filename )
+        with subtitle_renamer(filepath, logger):
+            if url:
+                get_subtitle(url, 'temp__' + filename, filepath)
 
 
 if __name__ == '__main__':
